@@ -1,0 +1,25 @@
+---
+name: EtherIP Tunnels
+maintainer: Ryosuke Nakayama <ryosuke.nakayama@ryskn.com>
+features:
+  - Point-to-point EtherIP (RFC 3378) tunnels carrying Ethernet frames over IPv4 or IPv6
+  - Tunnel interfaces can join a bridge domain or an L2 cross-connect
+  - Configurable outer TTL/hop limit, DSCP and DF
+  - Global receive policy (allow), refusing received EtherIP packets by default
+missing:
+  - "GSO frames (enable GSO segmentation on the tunnel interface instead:
+    `set interface feature gso <interface> enable`)"
+  - When VPP fragments the outer packet, the fragments carry the
+    configured TTL/hop limit minus one, since IP fragmentation does not
+    copy the locally originated flag to the fragments
+  - Chained buffers whose first segment does not hold the outer header
+    and 16 more bytes are dropped as too short
+  - IPv4 outer packets with IP options, since ip4-input punts them
+    before they reach the EtherIP input node
+  - Compatibility with the pre-RFC 0x0300 header
+  - ICMP fragmentation needed / Packet Too Big handling
+  - Receive policy exception for IPsec protected packets
+  - Copying DSCP, ECN or flow label between the frame and the outer header
+description: "An implementation of EtherIP (RFC 3378) tunnels"
+state: experimental
+properties: [API, CLI, MULTITHREAD]

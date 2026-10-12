@@ -1,0 +1,121 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright (c) 2026 Ryosuke Nakayama.
+ */
+
+option version = "0.1.0";
+
+import "vnet/interface_types.api";
+import "vnet/ip/ip_types.api";
+
+/** \brief A point-to-point EtherIP (RFC 3378) tunnel.
+    @param instance - optional unique custom device instance, else ~0.
+    @param src - Source (local) IP address
+    @param dst - Destination (remote) IP address, same address family as src
+    @param outer_table_id - FIB table ID of the outer header (0 = default)
+    @param sw_if_index - ignored on create/delete, present in details.
+    @param hop_limit - outer TTL / hop limit, 0 for the default (64)
+    @param dscp - outer DSCP, ECN bits are always 0
+    @param set_df - IPv4: set DF in the outer header; IPv6: do not
+                    fragment the outer packet at the source
+*/
+typedef etherip_tunnel
+{
+  u32 instance;
+  vl_api_address_t src;
+  vl_api_address_t dst;
+  u32 outer_table_id;
+  vl_api_interface_index_t sw_if_index;
+  u8 hop_limit;
+  vl_api_ip_dscp_t dscp;
+  bool set_df;
+};
+
+/** \brief Add or delete a single EtherIP tunnel. A tunnel is deleted by
+    matching src, dst and outer_table_id.
+    @param client_index - opaque cookie to identify the sender.
+    @param context - sender context, to match reply w/ request.
+    @param is_add - add if true, delete if false.
+    @param tunnel - tunnel definition to add or delete.
+*/
+define etherip_tunnel_add_del
+{
+  u32 client_index;
+  u32 context;
+  bool is_add;
+  vl_api_etherip_tunnel_t tunnel;
+};
+
+/** \brief Add or delete a single EtherIP tunnel.
+    @param context - sender context, to match reply w/ request.
+    @param retval - return code for the request.
+    @param sw_if_index - the interface corresponding to the affected tunnel.
+*/
+define etherip_tunnel_add_del_reply
+{
+  u32 context;
+  i32 retval;
+  vl_api_interface_index_t sw_if_index;
+};
+
+/** \brief Dump details of all or just a single EtherIP tunnel.
+    @param client_index - opaque cookie to identify the sender.
+    @param context - sender context, to match reply w/ request.
+    @param sw_if_index - filter for tunnel of this interface index, ~0 for all.
+*/
+define etherip_tunnel_dump
+{
+  u32 client_index;
+  u32 context;
+  vl_api_interface_index_t sw_if_index [default=0xffffffff];
+};
+
+/** \brief Details response for one of the requested EtherIP tunnels.
+    @param context - sender context, to match reply w/ request.
+    @param tunnel - definition of the dumped tunnel.
+*/
+define etherip_tunnel_details
+{
+  u32 context;
+  vl_api_etherip_tunnel_t tunnel;
+};
+
+/** \brief Accept or refuse received EtherIP packets (default: refuse).
+    Transmission is not affected.
+    @param client_index - opaque cookie to identify the sender.
+    @param context - sender context, to match reply w/ request.
+    @param enable - accept received EtherIP packets if true.
+*/
+autoreply define etherip_set_allow
+{
+  u32 client_index;
+  u32 context;
+  bool enable;
+};
+
+/** \brief Get the receive policy for EtherIP packets.
+    @param client_index - opaque cookie to identify the sender.
+    @param context - sender context, to match reply w/ request.
+*/
+define etherip_get_allow
+{
+  u32 client_index;
+  u32 context;
+};
+
+/** \brief Receive policy for EtherIP packets.
+    @param context - sender context, to match reply w/ request.
+    @param retval - return code for the request.
+    @param enable - received EtherIP packets are accepted if true.
+*/
+define etherip_get_allow_reply
+{
+  u32 context;
+  i32 retval;
+  bool enable;
+};
+
+/*
+ * Local Variables:
+ * eval: (c-set-style "gnu")
+ * End:
+ */

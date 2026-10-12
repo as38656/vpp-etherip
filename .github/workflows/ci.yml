@@ -1,0 +1,229 @@
+# Build and test the EtherIP plugin against FD.io VPP on a GitHub-hosted runner.
+#
+# One job per VPP branch (matrix.vpp-ref). Each job:
+#   1. builds VPP without the plugin (make install-dep, make build: debug)
+#   2. B: builds the plugin out of tree against the VPP install prefix
+#      (build-root/install-vpp_debug-native/vpp) and runs test/test_etherip.py
+#      with make test-debug EXTERN_TESTS / EXTERN_PLUGINS / EXTERN_APIDIR
+#   3. A: copies etherip/ to vpp/src/plugins/etherip/ and runs make build
+#      again, to check that the plugin still builds in the VPP tree
+#      (the tests are not run again)
+#
+# The stable/2606 job is allowed to fail (continue-on-error) until the plugin
+# has been checked against that branch. The weekly schedule detects changes in
+# VPP master that break the plugin.
+#
+# ccache is kept between runs with actions/cache, one cache per VPP branch.
+# The external dependencies of VPP (DPDK and others) are built by "make build"
+# on every run. On failure, the build and test logs and /tmp/vpp-unittest-*
+# are uploaded as an artifact.
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # Mondays 03:17 UTC
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-test:
+    name: vpp ${{ matrix.vpp-ref }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - vpp-ref: master
+            cache-id: master
+            experimental: false
+          - vpp-ref: stable/2606
+            cache-id: stable-2606
+            experimental: true
+    env:
+      CCACHE_DIR: /home/runner/.ccache
+      CCACHE_MAXSIZE: 5G
+      # VPP install prefix written by "make build" (debug)
+      VPP_PREFIX: ${{ github.workspace }}/vpp/build-root/install-vpp_debug-native/vpp
+      VPP_BUILD_DIR: ${{ github.workspace }}/vpp/build-root/build-vpp_debug-native/vpp
+      PLUGIN_BUILD_DIR: ${{ github.workspace }}/plugin-build
+      PLUGIN_PREFIX: ${{ github.workspace }}/plugin-install
+    steps:
+      - name: Free disk space
+        run: |
+          set -euo pipefail
+          # The image ships toolchains that VPP does not use; remove them so that the
+          # debug build tree and ccache fit on the root file system.
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Checkout plugin
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: plugin
+          persist-credentials: false
+
+      - name: Checkout VPP (${{ matrix.vpp-ref }})
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: FDio/vpp
+          ref: ${{ matrix.vpp-ref }}
+          path: vpp
+          # src/scripts/version uses git describe, so fetch the history and tags
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Prepare
+        run: |
+          set -euo pipefail
+          LOG_DIR="$RUNNER_TEMP/logs"
+          mkdir -p "$LOG_DIR"
+          echo "LOG_DIR=$LOG_DIR" >> "$GITHUB_ENV"
+          echo "plugin: $(git -C plugin log -1 --format='%H %s')"
+          echo "vpp:    $(git -C vpp log -1 --format='%H %s')"
+          echo "vpp version: $(vpp/src/scripts/version)"
+          echo "nproc=$(nproc)"
+          if [ -e vpp/src/plugins/etherip ]; then
+            echo "::warning::vpp/src/plugins/etherip exists in ${{ matrix.vpp-ref }}"
+          fi
+
+      - name: Restore ccache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /home/runner/.ccache
+          key: ccache-${{ runner.os }}-${{ runner.arch }}-vpp-${{ matrix.cache-id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ runner.arch }}-vpp-${{ matrix.cache-id }}-
+
+      - name: Install dependencies (make install-dep)
+        working-directory: vpp
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ccache
+          make UNATTENDED=y install-dep 2>&1 | tee "$LOG_DIR/install-dep.log"
+
+      - name: Build VPP without the plugin (make build)
+        id: build-vpp
+        working-directory: vpp
+        run: |
+          set -euo pipefail
+          ccache --zero-stats >/dev/null
+          make build 2>&1 | tee "$LOG_DIR/vpp-build.log"
+          ccache --show-stats | tee "$LOG_DIR/ccache-stats.txt"
+          test -f "$VPP_PREFIX/include/vppinfra/clib.h"
+          ls -l "$VPP_PREFIX"/lib/*/cmake/vpp/VPPConfig.cmake "$VPP_PREFIX/bin/vppapigen"
+          if ls "$VPP_PREFIX"/lib/*/vpp_plugins/etherip_plugin.so 2>/dev/null; then
+            echo "::error::the VPP install already contains etherip_plugin.so"
+            exit 1
+          fi
+
+      - name: Save ccache
+        if: steps.build-vpp.outcome == 'success'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /home/runner/.ccache
+          key: ccache-${{ runner.os }}-${{ runner.arch }}-vpp-${{ matrix.cache-id }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: "B: build the plugin out of tree"
+        id: build-external
+        run: |
+          set -euo pipefail
+          # Use the compiler that VPP was built with.
+          VPP_CC=$(sed -n 's/^CMAKE_C_COMPILER:[A-Z]*=//p' "$VPP_BUILD_DIR/CMakeCache.txt")
+          echo "VPP C compiler: ${VPP_CC:-(not found, using the default)}"
+          cc_args=()
+          if [ -n "$VPP_CC" ]; then
+            cc_args+=("-DCMAKE_C_COMPILER=$VPP_CC")
+          fi
+          {
+            cmake -S plugin -B "$PLUGIN_BUILD_DIR" -G Ninja \
+              -DCMAKE_BUILD_TYPE=Debug \
+              -DCMAKE_PREFIX_PATH="$VPP_PREFIX" \
+              -DCMAKE_INSTALL_PREFIX="$PLUGIN_PREFIX" \
+              -DCMAKE_C_FLAGS=-Werror \
+              "${cc_args[@]}"
+            cmake --build "$PLUGIN_BUILD_DIR" --verbose
+            cmake --install "$PLUGIN_BUILD_DIR"
+          } 2>&1 | tee "$LOG_DIR/plugin-build.log"
+          find "$PLUGIN_PREFIX" -type f | sort
+          plugin_so=$(find "$PLUGIN_PREFIX" -name etherip_plugin.so)
+          api_json=$(find "$PLUGIN_PREFIX" -name etherip.api.json)
+          test -n "$plugin_so" -a -n "$api_json"
+          # make test-debug arguments
+          {
+            echo "EXTERN_PLUGINS=$(dirname "$plugin_so")"
+            echo "EXTERN_APIDIR=$PLUGIN_PREFIX/share/vpp/api"
+            echo "EXTERN_TESTS=$GITHUB_WORKSPACE/plugin/test"
+          } | tee -a "$GITHUB_ENV"
+
+      - name: "B: test the out-of-tree plugin (make test-debug)"
+        working-directory: vpp
+        run: |
+          set -euo pipefail
+          make test-debug TEST=test_etherip V=1 \
+            EXTERN_TESTS="$EXTERN_TESTS" \
+            EXTERN_PLUGINS="$EXTERN_PLUGINS" \
+            EXTERN_APIDIR="$EXTERN_APIDIR" \
+            2>&1 | tee "$LOG_DIR/test.log"
+          echo "----- summary -----"
+          grep -A 12 "TEST RESULTS" "$LOG_DIR/test.log" || true
+
+      - name: "A: build the plugin in the VPP tree (make build)"
+        if: ${{ !cancelled() && steps.build-vpp.outcome == 'success' }}
+        working-directory: vpp
+        run: |
+          set -euo pipefail
+          rm -rf src/plugins/etherip
+          # cp without -p: the new CMakeLists.txt is newer than the configure
+          # timestamp in build-root, so make build runs cmake again and
+          # src/plugins/CMakeLists.txt picks up the new directory.
+          cp -R ../plugin/etherip src/plugins/etherip
+          touch src/plugins/etherip/CMakeLists.txt
+          make build 2>&1 | tee "$LOG_DIR/vpp-build-in-tree.log"
+          ls -l "$VPP_PREFIX"/lib/*/vpp_plugins/etherip_plugin.so
+
+      - name: Collect logs
+        if: failure()
+        run: |
+          set -uo pipefail
+          shopt -s nullglob
+          # Core files are excluded because they can be hundreds of MB.
+          items=()
+          for p in /tmp/vpp-unittest-* /tmp/vpp-failed-unittests /tmp/api_post_mortem.*; do
+            items+=("$(basename "$p")")
+          done
+          if [ "${#items[@]}" -gt 0 ]; then
+            tar -C /tmp --exclude='core' --exclude='core.*' -czf "$LOG_DIR/vpp-unittest-tmp.tar.gz" "${items[@]}" || true
+          fi
+          copy() { [ -f "$1" ] && cp "$1" "$LOG_DIR/$2" || true; }
+          copy "$VPP_BUILD_DIR/CMakeFiles/CMakeConfigureLog.yaml" vpp-CMakeConfigureLog.yaml
+          copy "$PLUGIN_BUILD_DIR/CMakeFiles/CMakeConfigureLog.yaml" plugin-CMakeConfigureLog.yaml
+          copy "$PLUGIN_BUILD_DIR/CMakeCache.txt" plugin-CMakeCache.txt
+          ls -la "$LOG_DIR"
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: logs-vpp-${{ matrix.cache-id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/logs
+          if-no-files-found: ignore
+          retention-days: 14
