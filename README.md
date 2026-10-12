@@ -53,21 +53,16 @@ The code was written in the VPP tree as `src/plugins/etherip/` and
 repository is that directory without changes, so it can be built either
 against an installed VPP or inside a VPP tree.
 
-Supported VPP versions:
+Supported VPP version: **`stable/2606` (VPP 26.06)**. The CI builds and
+tests the plugin against this branch, and this job must pass.
 
-- **`stable/2606` (VPP 26.06): recommended.** The CI builds and tests the
-  plugin against this branch, and this job must pass.
-- **VPP master: does not work at the moment.** Since VPP master commit
-  `9c6b61f4b9` ("vnet: use hidden visibility with explicit exports"), libvnet
-  exports only the symbols marked `__clib_export`, and
-  `vnet_feature_modify_end_node`, which the plugin calls, is not one of
-  them. The plugin builds, but VPP exits with
-  `undefined symbol: vnet_feature_modify_end_node` when the plugin creates
-  the first tunnel. Inside a VPP tree, `make build` fails in the
-  `check-vnet-exports` step for the same symbol. A patch that adds
-  `__clib_export` to `vnet_feature_modify_end_node` will be submitted to
-  VPP. Until it is merged, use `stable/2606`. VPP master before `9c6b61f4b9`
-  works (the plugin was developed on master `5b0c637e1`).
+VPP master is not supported. Since VPP master commit `9c6b61f4b9` ("vnet:
+use hidden visibility with explicit exports"), libvnet does not export
+`vnet_feature_modify_end_node`, which the plugin calls, so the plugin does
+not work on VPP master: it builds, but VPP exits with
+`undefined symbol: vnet_feature_modify_end_node` when the plugin creates the
+first tunnel, and inside a VPP tree `make build` fails in the
+`check-vnet-exports` step for the same symbol.
 
 The CI also runs against VPP master and allows that job to fail
 (see [CI](#ci)).
@@ -278,10 +273,9 @@ VPP that break the plugin are detected.
 
 There is one job per VPP branch, `stable/2606` and `master`. The
 `stable/2606` job is required: its failure fails the run. The `master` job is
-marked `continue-on-error`, so its failure does not fail the run. This is
-temporary: the job fails until `vnet_feature_modify_end_node` is exported by
-VPP master (see [Origin and compatibility](#origin-and-compatibility)), and
-it becomes required again after that. Each job:
+marked `continue-on-error`, because VPP master is currently not supported
+(see [Origin and compatibility](#origin-and-compatibility)), so its failure
+does not fail the run. Each job:
 
 1. checks out this repository and FD.io VPP at the branch, with history and
    tags (`src/scripts/version` uses `git describe`);

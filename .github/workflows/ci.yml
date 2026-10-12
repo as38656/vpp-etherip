@@ -50,12 +50,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Temporary, until vnet_feature_modify_end_node is exported upstream:
+          # VPP master is currently not supported, so this job may fail:
           # since VPP master 9c6b61f4b9 ("vnet: use hidden visibility with
-          # explicit exports") libvnet does not export it, so VPP fails with
-          # "undefined symbol" when the plugin creates the first tunnel, and
-          # the in-tree build fails in check-vnet-exports. Set allow-failure
-          # back to false when the __clib_export patch is merged.
+          # explicit exports") libvnet does not export
+          # vnet_feature_modify_end_node, so VPP fails with "undefined symbol"
+          # when the plugin creates the first tunnel, and the in-tree build
+          # fails in check-vnet-exports.
           - vpp-ref: master
             cache-id: master
             allow-failure: true
