@@ -9,9 +9,9 @@
 #      again, to check that the plugin still builds in the VPP tree
 #      (the tests are not run again)
 #
-# The stable/2606 job is required. The master job is allowed to fail
-# (continue-on-error, see the matrix below). The weekly schedule detects
-# changes in VPP master that break the plugin.
+# Only VPP releases are supported, so the matrix has only stable branches and
+# every job is required. VPP master is not supported (see README.md). The
+# weekly schedule detects fixes on the stable branches that break the plugin.
 #
 # ccache is kept between runs with actions/cache, one cache per VPP branch.
 # The external dependencies of VPP (DPDK and others) are built by "make build"
@@ -45,23 +45,14 @@ jobs:
     name: vpp ${{ matrix.vpp-ref }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
-    continue-on-error: ${{ matrix.allow-failure }}
     strategy:
       fail-fast: false
       matrix:
+        # One entry per supported VPP release. stable/2610 will be added
+        # after the VPP 26.10 release.
         include:
-          # VPP master is currently not supported, so this job may fail:
-          # since VPP master 9c6b61f4b9 ("vnet: use hidden visibility with
-          # explicit exports") libvnet does not export
-          # vnet_feature_modify_end_node, so VPP fails with "undefined symbol"
-          # when the plugin creates the first tunnel, and the in-tree build
-          # fails in check-vnet-exports.
-          - vpp-ref: master
-            cache-id: master
-            allow-failure: true
           - vpp-ref: stable/2606
             cache-id: stable-2606
-            allow-failure: false
     env:
       CCACHE_DIR: /home/runner/.ccache
       CCACHE_MAXSIZE: 5G

@@ -45,7 +45,7 @@ Other properties:
 - RX counters are incremented by the decap nodes (`etherip4-input`,
   `etherip6-input`) and TX counters by `etherip-encap`.
 
-## Origin and compatibility
+## Origin
 
 The code was written in the VPP tree as `src/plugins/etherip/` and
 `test/test_etherip.py` (branch `etherip` of ryskn/vpp-etherip, commit
@@ -53,19 +53,26 @@ The code was written in the VPP tree as `src/plugins/etherip/` and
 repository is that directory without changes, so it can be built either
 against an installed VPP or inside a VPP tree.
 
-Supported VPP version: **`stable/2606` (VPP 26.06)**. The CI builds and
-tests the plugin against this branch, and this job must pass.
+## Supported VPP versions
+
+Only VPP releases are supported.
+
+| VPP | status |
+|---|---|
+| 26.06 (`stable/2606`) | supported, built and tested by the CI |
+| 26.10 (`stable/2610`) | expected to work, not tested yet |
+| 27.02 and later, VPP master | not supported |
 
 VPP master is not supported. Since VPP master commit `9c6b61f4b9` ("vnet:
 use hidden visibility with explicit exports"), libvnet does not export
-`vnet_feature_modify_end_node`, which the plugin calls, so the plugin does
-not work on VPP master: it builds, but VPP exits with
+`vnet_feature_modify_end_node`, which the plugin calls. The plugin builds
+against such a VPP, but VPP exits with
 `undefined symbol: vnet_feature_modify_end_node` when the plugin creates the
 first tunnel, and inside a VPP tree `make build` fails in the
-`check-vnet-exports` step for the same symbol.
-
-The CI also runs against VPP master and allows that job to fail
-(see [CI](#ci)).
+`check-vnet-exports` step for the same symbol. `stable/2610` was branched
+from master before that commit and does not contain it, so the plugin is
+expected to work on 26.10 (not tested). Releases made from master after that
+commit (27.02 and later) are expected not to work.
 
 ## Repository layout
 
@@ -191,10 +198,8 @@ with `CMAKE_BUILD_TYPE=Release` against `make build-release`.
 When the plugin is built inside the VPP tree, copy the test as well and run
 `make test-debug TEST=test_etherip` without the `EXTERN_*` variables.
 
-Expected result on `stable/2606` and on VPP master before `9c6b61f4b9`: 53
-tests, 52 passed and 1 skipped. On later VPP master, the tests that create a
-tunnel fail because VPP exits with an undefined symbol (see
-[Origin and compatibility](#origin-and-compatibility)). The skipped test is
+Expected result on VPP 26.06 (`stable/2606`): 53 tests, 52 passed and 1
+skipped. The skipped test is
 `test_rx_ip4_options`: VPP `ip4-input` sends IPv4 packets with options to
 `ip4-options`, which punts them (except Router Alert + IGMP), so EtherIP
 packets with an outer IPv4 header with options never reach
@@ -268,14 +273,13 @@ Same as the `missing` list in [`etherip/FEATURE.yaml`](etherip/FEATURE.yaml):
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on GitHub-hosted
 `ubuntu-24.04` runners for pushes to `main`, pull requests, manual runs
-(`workflow_dispatch`) and once a week (Monday 03:17 UTC), so that changes in
-VPP that break the plugin are detected.
+(`workflow_dispatch`) and once a week (Monday 03:17 UTC), so that fixes on
+the stable branches that break the plugin are detected.
 
-There is one job per VPP branch, `stable/2606` and `master`. The
-`stable/2606` job is required: its failure fails the run. The `master` job is
-marked `continue-on-error`, because VPP master is currently not supported
-(see [Origin and compatibility](#origin-and-compatibility)), so its failure
-does not fail the run. Each job:
+There is one job per supported VPP release, currently only `stable/2606`
+(`stable/2610` will be added after the VPP 26.10 release). Every job is
+required. VPP master is not tested because it is not supported
+(see [Supported VPP versions](#supported-vpp-versions)). Each job:
 
 1. checks out this repository and FD.io VPP at the branch, with history and
    tags (`src/scripts/version` uses `git describe`);
@@ -293,8 +297,9 @@ does not fail the run. Each job:
 6. on failure, uploads the build logs, the test log and `/tmp/vpp-unittest-*`
    as an artifact.
 
-A job without ccache hits took 22 to 26 minutes in the first run, most of it
-for the VPP build (`make build`: 20 to 24 minutes).
+A job takes 22 to 26 minutes without a ccache from a previous run
+(`make build`: 20 to 24 minutes), and 7 to 8 minutes with it (`make build`:
+about 4.5 minutes, 98% of the cacheable compiler calls hit the cache).
 
 ## License
 
